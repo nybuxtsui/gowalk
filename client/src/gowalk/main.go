@@ -211,7 +211,64 @@ func badIpWorker() {
 	}
 }
 
+func (h *handler) forward(w http.ResponseWriter, r *http.Request) {
+	var body []byte
+	if r.Method == "POST" {
+		var err error
+		body, err = ioutil.ReadAll(r.Body)
+		if err != nil {
+			log.Println("Read content failed:", err)
+			http.Error(w, "InternalServerError", http.StatusInternalServerError)
+			return
+		}
+	}
+retry:
+	var ip = getGoodIp()
+	if ip == "" {
+		log.Println("All IP bad")
+		http.Error(w, "All IP bad", http.StatusBadGateway)
+		return
+	}
+	r.URL.Scheme = "https"
+	r.URL.Host = ip
+	req, err := http.NewRequest(r.Method, r.URL.String(), bytes.NewReader(body))
+	if err != nil {
+		log.Println("Create request failed:", err)
+		http.Error(w, "InternalServerError", http.StatusInternalServerError)
+		return
+	}
+	req.Host = r.Host
+	req.Header = r.Header
+	resp, err := client.Transport.RoundTrip(req)
+	if err != nil {
+		suspCh <- ip
+		goto retry
+	}
+	defer resp.Body.Close()
+	for k, i := range resp.Header {
+		for _, v := range i {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	buff := make([]byte, 4*1024)
+	for {
+		n, err := resp.Body.Read(buff)
+		if n != 0 {
+			w.Write(buff[:n])
+		}
+		if err != nil {
+			break
+		}
+	}
+	return
+}
 func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Scheme == "" && (strings.HasSuffix(r.Host, ".google.com") || strings.HasPrefix(r.Host, ".googleusercontent.com") || strings.HasSuffix(r.Host, ".gstatic.com")) {
+		h.forward(w, r)
+		return
+	}
+
 	var pos = 0
 	var data = requestToHttpData(r)
 	data.Password = config.GoWalk.Password
@@ -243,7 +300,7 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 		req.Host = config.GoWalk.AppId[rand.Intn(len(config.GoWalk.AppId))] + ".appspot.com"
 
 		var resp *http.Response
-		resp, err = client.Do(req)
+		resp, err = client.Transport.RoundTrip(req)
 		if err != nil {
 			suspCh <- ip
 			log.Println("Fetch failed:", err)
