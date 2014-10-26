@@ -1,0 +1,5 @@
+[gowalk]
+  appid = ["appid1", "appid2"]
+  ip = "ip1|ip2|ip3"
+  password = ""
+  listen = "0.0.0.0:18087"
