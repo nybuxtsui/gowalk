@@ -14,3 +14,6 @@ gowalk是借鉴goagent，使用go开发的高性能稳定的代理服务器。
 4. export GOPATH=$PWD
 5. go build gowalk
 6. ./gowalk
+
+#关于部署证书问题
+当采用gowalk作为代理部署gowalk时，需要将gowalk的ca.crt证书复制到go_appengine的lib/cacerts/cacerts.txt文件的末尾
