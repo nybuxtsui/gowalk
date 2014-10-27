@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"time"
 )
 
 const (
@@ -29,6 +30,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 func proxy(w http.ResponseWriter, r *http.Request) error {
 	c := appengine.NewContext(r)
 	client := urlfetch.Client(c)
+	client.Transport.(*urlfetch.Transport).Deadline = time.Second * 60
 
 	var buff, err = ioutil.ReadAll(r.Body)
 	if err != nil {
