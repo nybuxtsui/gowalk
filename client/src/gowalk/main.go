@@ -170,7 +170,8 @@ func goodIpWorker() {
 		select {
 		case req := <-reqCh:
 			if len(goodIp) > 0 {
-				req.ch <- goodIp[rand.Intn(len(goodIp))]
+				req.ch <- goodIp[0]
+				//req.ch <- goodIp[rand.Intn(len(goodIp))]
 			} else {
 				req.ch <- ""
 			}
