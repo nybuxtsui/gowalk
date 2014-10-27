@@ -1,12 +1,13 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"compress/gzip"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 var (
@@ -20,7 +21,7 @@ type HttpData struct {
 	Password string
 	Status   int
 	Header   http.Header
-	Body     []byte
+	Body     io.ReadCloser
 }
 
 const (
@@ -30,95 +31,100 @@ const (
 	X_GW_PWD    = "X-GW-PWD"
 )
 
-func encode(data *HttpData) (ret []byte, err error) {
-	var buff = new(bytes.Buffer)
-
+func encode(data *HttpData, w io.Writer) (err error) {
+	zw := gzip.NewWriter(w)
 	if data.Method != "" {
-		buff.WriteString(X_GW_Method)
-		buff.WriteByte(':')
-		buff.WriteString(data.Method)
-		buff.WriteByte('\n')
+		zw.Write([]byte(X_GW_Method))
+		zw.Write([]byte{':'})
+		zw.Write([]byte(data.Method))
+		zw.Write([]byte{'\n'})
 	}
 	if data.Url != "" {
-		buff.WriteString(X_GW_URL)
-		buff.WriteByte(':')
-		buff.WriteString(data.Url)
-		buff.WriteByte('\n')
+		zw.Write([]byte(X_GW_URL))
+		zw.Write([]byte{':'})
+		zw.Write([]byte(data.Url))
+		zw.Write([]byte{'\n'})
 	}
 	if data.Password != "" {
-		buff.WriteString(X_GW_PWD)
-		buff.WriteByte(':')
-		buff.WriteString(data.Password)
-		buff.WriteByte('\n')
+		zw.Write([]byte(X_GW_PWD))
+		zw.Write([]byte{':'})
+		zw.Write([]byte(data.Password))
+		zw.Write([]byte{'\n'})
 	}
 	if data.Status != 0 {
-		buff.WriteString(X_GW_Status)
-		buff.WriteByte(':')
-		buff.WriteString(strconv.FormatInt(int64(data.Status), 10))
-		buff.WriteByte('\n')
+		zw.Write([]byte(X_GW_Status))
+		zw.Write([]byte{':'})
+		zw.Write([]byte(strconv.FormatInt(int64(data.Status), 10)))
+		zw.Write([]byte{'\n'})
 	}
 	for k, i := range data.Header {
 		for _, v := range i {
-			buff.WriteString(k)
-			buff.WriteByte(':')
-			buff.WriteString(v)
-			buff.WriteByte('\n')
+			zw.Write([]byte(k))
+			zw.Write([]byte{':'})
+			zw.Write([]byte(v))
+			zw.Write([]byte{'\n'})
 		}
 	}
-	buff.WriteByte('\n')
-	buff.Write(data.Body)
-
-	t := new(bytes.Buffer)
-	tt := gzip.NewWriter(t)
-	_, err = tt.Write(buff.Bytes())
-	if err != nil {
-		tt.Close()
-		return
+	zw.Write([]byte{'\n'})
+	buf := make([]byte, 8*1024)
+	for {
+		buf = buf[:cap(buf)]
+		n, err := data.Body.Read(buf)
+		if n != 0 {
+			zw.Write(buf[:n])
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
 	}
-	tt.Close()
-	ret = t.Bytes()
+	err = zw.Close()
 	return
 }
 
-func decode(buf []byte) (data *HttpData, err error) {
-	var t *gzip.Reader
-	t, err = gzip.NewReader(bytes.NewBuffer(buf))
+type BufGzipReader struct {
+	r *bufio.Reader
+	z *gzip.Reader
+}
+
+func (r *BufGzipReader) Close() error {
+	return r.z.Close()
+}
+
+func (r *BufGzipReader) Read(p []byte) (n int, err error) {
+	return r.r.Read(p)
+}
+
+func decode(_r io.Reader) (data *HttpData, err error) {
+	zr, err := gzip.NewReader(_r)
 	if err != nil {
 		return nil, err
 	}
-	defer t.Close()
-	buf, err = ioutil.ReadAll(t)
-	if err != nil {
-		return nil, err
-	}
+	defer func() {
+		if err != nil && zr != nil {
+			zr.Close()
+		}
+	}()
+	r := &BufGzipReader{bufio.NewReader(zr), zr}
 
 	data = &HttpData{Header: make(http.Header)}
-	var key string
 	for {
-		var pos = bytes.IndexAny(buf, ":\n")
-		if pos == -1 {
-			return nil, ErrFormat
+		line, err := r.r.ReadString('\n')
+		if err != nil {
+			return nil, err
 		}
-		if pos == 0 && buf[pos] == '\n' {
-			// 过滤最后一个\n,并且迭代结束
-			buf = buf[pos+1:]
+		if len(line) == 1 {
+			// 遇到空行,迭代结束
 			break
 		}
-
-		if buf[pos] == '\n' {
+		kv := strings.SplitN(line, ":", 2)
+		if len(kv) != 2 {
 			return nil, ErrFormat
 		}
-		key = string(buf[0:pos])
-		buf = buf[pos+1:]
-
-		pos = bytes.IndexByte(buf, '\n')
-		if pos == -1 {
-			return nil, ErrFormat
-		}
-
-		var value = string(buf[0:pos])
-		buf = buf[pos+1:]
-
+		key := kv[0]
+		value := kv[1][0 : len(kv[1])-1]
 		if key == "" {
 			return nil, ErrFormat
 		} else if key == X_GW_Method {
@@ -138,7 +144,6 @@ func decode(buf []byte) (data *HttpData, err error) {
 			data.Header.Add(key, value)
 		}
 	}
-
-	data.Body = buf
+	data.Body = r
 	return
 }

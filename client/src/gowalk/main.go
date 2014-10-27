@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/BurntSushi/toml"
 	"github.com/nybuxtsui/ca/depot"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -19,7 +20,7 @@ import (
 )
 
 const (
-	rangeSize = 1572864
+	rangeSize = 24 * 1024 * 1024
 )
 
 type httpsReq struct {
@@ -36,6 +37,7 @@ type gowalkConfig struct {
 	Ip       string   `toml:"ip"`
 	Password string   `toml:"password"`
 	Listen   string   `toml:"listen"`
+	ByPass   []string `toml:"bypass"`
 }
 
 type Config struct {
@@ -132,7 +134,7 @@ func requestToHttpData(r *http.Request) *HttpData {
 	}
 	data.Header = r.Header
 
-	data.Body, _ = ioutil.ReadAll(r.Body)
+	data.Body = r.Body
 	return data
 }
 
@@ -190,22 +192,34 @@ func goodIpWorker() {
 	}
 }
 
+type badIpDef struct {
+	count int
+	t     int64
+}
+
 func badIpWorker() {
-	var badIp = make(map[string]bool)
+	var badIp = make(map[string]badIpDef)
 	for {
 		t := time.NewTimer(10 * time.Second)
 		select {
 		case ip := <-badCh:
 			t.Stop()
-			badIp[ip] = false
+			badIp[ip] = badIpDef{1, time.Now().Add(30 * time.Second).Unix()}
 		case <-t.C:
-			for k, _ := range badIp {
+			var now = time.Now().Unix()
+			for k, v := range badIp {
+				if now <= v.t {
+					continue
+				}
 				resp, err := client.Get(k)
 				if err == nil && resp.StatusCode == 200 {
 					goodCh <- k
 					delete(badIp, k)
 				} else {
-					log.Println("IP Bad:", k)
+					log.Println("IP Bad:", k, err)
+					v.count++
+					v.t = now + int64(v.count*30)
+					badIp[k] = v
 				}
 			}
 		}
@@ -213,15 +227,10 @@ func badIpWorker() {
 }
 
 func (h *handler) forward(w http.ResponseWriter, r *http.Request) {
-	var body []byte
+	closeNotify := w.(http.CloseNotifier).CloseNotify()
+	var body io.Reader
 	if r.Method == "POST" {
-		var err error
-		body, err = ioutil.ReadAll(r.Body)
-		if err != nil {
-			log.Println("Read content failed:", err)
-			http.Error(w, "InternalServerError", http.StatusInternalServerError)
-			return
-		}
+		body = r.Body
 	}
 retry:
 	var ip = getGoodIp()
@@ -232,7 +241,7 @@ retry:
 	}
 	r.URL.Scheme = "https"
 	r.URL.Host = ip
-	req, err := http.NewRequest(r.Method, r.URL.String(), bytes.NewReader(body))
+	req, err := http.NewRequest(r.Method, r.URL.String(), body)
 	if err != nil {
 		log.Println("Create request failed:", err)
 		http.Error(w, "InternalServerError", http.StatusInternalServerError)
@@ -252,8 +261,13 @@ retry:
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	buff := make([]byte, 4*1024)
+	buff := make([]byte, 8*1024)
 	for {
+		select {
+		case <-closeNotify:
+			return
+		default:
+		}
 		n, err := resp.Body.Read(buff)
 		if n != 0 {
 			w.Write(buff[:n])
@@ -265,10 +279,15 @@ retry:
 	return
 }
 func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Scheme == "" && (strings.HasSuffix(r.Host, ".google.com") || strings.HasPrefix(r.Host, ".googleusercontent.com") || strings.HasSuffix(r.Host, ".gstatic.com")) {
-		h.forward(w, r)
-		return
+	if r.URL.Scheme == "" {
+		for _, domain := range config.GoWalk.ByPass {
+			if strings.HasSuffix(r.Host, domain) {
+				h.forward(w, r)
+				return
+			}
+		}
 	}
+	closeNotify := w.(http.CloseNotifier).CloseNotify()
 
 	var pos = 0
 	var data = requestToHttpData(r)
@@ -278,6 +297,11 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 	var total int
 
 	for {
+		select {
+		case <-closeNotify:
+			return
+		default:
+		}
 		if autoRange {
 			data.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", pos, pos+rangeSize-1))
 		} else {
@@ -287,7 +311,13 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		var buff, err = encode(data)
+		var buff = new(bytes.Buffer)
+		var err = encode(data, buff, closeNotify)
+		if err != nil {
+			log.Println("Encode content failed:", err)
+			http.Error(w, "InternalServerError", http.StatusInternalServerError)
+			return
+		}
 
 	retry:
 		var ip = getGoodIp()
@@ -297,7 +327,7 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var req *http.Request
-		req, err = http.NewRequest("POST", "https://"+ip, bytes.NewReader(buff))
+		req, err = http.NewRequest("POST", "https://"+ip, buff)
 		req.Host = config.GoWalk.AppId[rand.Intn(len(config.GoWalk.AppId))] + ".appspot.com"
 
 		var resp *http.Response
@@ -308,25 +338,27 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 			goto retry
 		}
 		defer resp.Body.Close()
-		buff, err = ioutil.ReadAll(resp.Body)
-		if err != nil {
-			suspCh <- ip
-			log.Println("Read content failed:", err)
-			http.Error(w, "InternalServerError", http.StatusInternalServerError)
-			return
-		}
 
 		if resp.StatusCode != 200 {
+			buff, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				suspCh <- ip
+				log.Println("Read content failed:", err)
+				http.Error(w, "InternalServerError", http.StatusInternalServerError)
+				return
+			}
 			http.Error(w, string(buff), resp.StatusCode)
 			return
 		}
+
 		var data2 *HttpData
-		data2, err = decode(buff)
+		data2, err = decode(resp.Body)
 		if err != nil {
 			log.Println("Decode content failed:", err)
 			http.Error(w, "InternalServerError", http.StatusInternalServerError)
 			return
 		}
+		defer data2.Body.Close()
 		if autoRange && data2.Status == 206 {
 			curr = -1
 			total = -1
@@ -361,7 +393,20 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 		} else {
 			w.WriteHeader(data2.Status)
 		}
-		w.Write(data2.Body)
+		temp := make([]byte, 8*1024)
+		for {
+			n, err := data2.Body.Read(temp)
+			if n != 0 {
+				w.Write(temp[0:n])
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Println("Write data failed:", err)
+				return
+			}
+		}
 		if autoRange && pos < total {
 			continue
 		} else {
@@ -413,11 +458,7 @@ func main() {
 	go func() {
 		server := &http.Server{
 			Handler:   h,
-			TLSConfig: &tls.Config{
-			//ClientAuth:         tls.VerifyClientCertIfGiven,
-			//ClientCAs:          certPool,
-			//InsecureSkipVerify: true,
-			},
+			TLSConfig: &tls.Config{},
 		}
 		server.Serve(h)
 	}()

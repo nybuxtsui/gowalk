@@ -3,9 +3,7 @@ package main
 import (
 	"appengine"
 	"appengine/urlfetch"
-	"bytes"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"time"
 )
@@ -32,15 +30,14 @@ func proxy(w http.ResponseWriter, r *http.Request) error {
 	client := urlfetch.Client(c)
 	client.Transport.(*urlfetch.Transport).Deadline = time.Second * 60
 
-	var buff, err = ioutil.ReadAll(r.Body)
+	data, err := decode(r.Body)
 	if err != nil {
-		c.Errorf("Read request body failed: %v", err)
-		http.Error(w, "InternalServerError", http.StatusInternalServerError)
+		c.Errorf("decode failed: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return err
 	}
+	defer data.Body.Close()
 
-	var data *HttpData
-	data, err = decode(buff)
 	if data.Password != password {
 		c.Errorf("Password not match: %v, %v", data.Password, password)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -48,7 +45,7 @@ func proxy(w http.ResponseWriter, r *http.Request) error {
 	}
 	c.Infof("Fetch: %v %v", data.Method, data.Url)
 
-	req, err := http.NewRequest(data.Method, data.Url, bytes.NewBuffer(data.Body))
+	req, err := http.NewRequest(data.Method, data.Url, data.Body)
 	if err != nil {
 		c.Errorf("Create request failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -71,18 +68,12 @@ func proxy(w http.ResponseWriter, r *http.Request) error {
 	data.Method = ""
 	data.Url = ""
 	data.Header = resp.Header
-	data.Body, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		c.Errorf("Read response failed: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return err
-	}
-	buff, err = encode(data)
+	data.Body = resp.Body
+	err = encode(data, w)
 	if err != nil {
 		c.Errorf("Encode response failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return err
 	}
-	w.Write(buff)
 	return nil
 }
