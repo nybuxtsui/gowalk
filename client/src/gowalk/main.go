@@ -211,7 +211,7 @@ func badIpWorker() {
 				if now <= v.t {
 					continue
 				}
-				resp, err := client.Get(k)
+				resp, err := client.Get("https://" + k)
 				if err == nil && resp.StatusCode == 200 {
 					goodCh <- k
 					delete(badIp, k)
