@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"runtime"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ type gowalkConfig struct {
 	Password string   `toml:"password"`
 	Listen   string   `toml:"listen"`
 	ByPass   []string `toml:"bypass"`
+	Profile  string   `toml:"profile"`
 }
 
 type Config struct {
@@ -463,5 +465,10 @@ func main() {
 		server.Serve(h)
 	}()
 
+	if config.GoWalk.Profile != "" {
+		go func() {
+			log.Println(http.ListenAndServe(config.GoWalk.Profile, nil))
+		}()
+	}
 	log.Fatalln("Listen failed:", http.ListenAndServe(config.GoWalk.Listen, h))
 }
