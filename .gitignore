@@ -1,5 +1,4 @@
 /client/gowalk.conf
-/client/src/github.com
 /client/certs/*
 /client/pkg
 /client/bin
