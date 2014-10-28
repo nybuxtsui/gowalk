@@ -448,7 +448,9 @@ func main() {
 	go goodIpWorker()
 	go badIpWorker()
 
-	IpInit()
+	if config.GoWalk.Ip == "" {
+		IpInit()
+	}
 
 	certPool = x509.NewCertPool()
 	certLib, err = depot.NewFileDepot("certs")
