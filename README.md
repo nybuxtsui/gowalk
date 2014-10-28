@@ -29,3 +29,4 @@ cd gowalk
 默认配置采用自动搜索ip模式，启动时间可能较长，如果自己有ip可以配置在gowalk.conf中，ip格式和goagent相同，`ip="ip1|ip2|ip3"`
 第一次运行后，将自动生成的certs目录下的ca.crt添加到浏览器信任CA(授权中心)中
 
+[二进制包下载](http://pan.baidu.com/s/1hq69vAO)
