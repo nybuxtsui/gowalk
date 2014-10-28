@@ -168,8 +168,12 @@ func getGoodIp() string {
 
 func goodIpWorker() {
 	var goodIp []string
-	goodIp = strings.Split(config.GoWalk.Ip, "|")
-	log.Println("Use IP:", goodIp)
+	if len(config.GoWalk.Ip) != 0 {
+		goodIp = strings.Split(config.GoWalk.Ip, "|")
+		log.Println("Use IP:", goodIp)
+	} else {
+		goodIp = make([]string, 0, 5)
+	}
 	for {
 		select {
 		case req := <-reqCh:
@@ -214,6 +218,9 @@ func badIpWorker() {
 					continue
 				}
 				resp, err := client.Get("https://" + k)
+				if err == nil {
+					defer resp.Body.Close()
+				}
 				if err == nil && resp.StatusCode == 200 {
 					goodCh <- k
 					delete(badIp, k)
@@ -440,6 +447,8 @@ func main() {
 
 	go goodIpWorker()
 	go badIpWorker()
+
+	IpInit()
 
 	certPool = x509.NewCertPool()
 	certLib, err = depot.NewFileDepot("certs")

@@ -21,7 +21,6 @@ type IpDefine struct {
 var (
 	ips   = make([]IpDefine, 0, 250)
 	total = 0
-	ipch  = make(chan string, 4)
 )
 
 func calcIpCount(ip string) int {
@@ -42,10 +41,6 @@ func importIpv4Range(ip string) {
 	var c = calcIpCount(ip)
 	total += c
 	ips = append(ips, IpDefine{total - 1, ip, c})
-}
-
-func getIp() string {
-	return <-ipch
 }
 
 func randomIp() string {
@@ -76,7 +71,8 @@ func randomIp() string {
 	return r.String()
 }
 
-func NoInit() {
+func IpInit() {
+	log.Println("IP not config, search IP")
 	rand.Seed(time.Now().UnixNano())
 	importIpv4Range("1.179.248-255.0-255")
 	importIpv4Range("103.246.187.0-255")
@@ -279,7 +275,7 @@ func NoInit() {
 	importIpv4Range("23.239.5.106")
 	importIpv4Range("74.207.242.141")
 	importIpv4Range("91.213.30.143-187")
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 5; i++ {
 		go func() {
 			for {
 				var ip = randomIp()
@@ -293,11 +289,12 @@ func NoInit() {
 				req, err := http.NewRequest("GET", "https://"+ip, nil)
 				resp, err := client.Do(req)
 				if err == nil {
+					defer resp.Body.Close()
 					if resp.StatusCode == 200 {
-						log.Println(resp.StatusCode, resp.ContentLength)
 						resp.Body.Close()
-						ipch <- ip
+						goodCh <- ip
 						log.Println("Found IP:", ip, err)
+						break
 					}
 				}
 			}
