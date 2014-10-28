@@ -1,3 +1,3 @@
 export GOPATH=$PWD/client
-go build gowalk
+$GOROOT/bin/go build gowalk
 cp ./client/gowalk.conf.default gowalk.conf
