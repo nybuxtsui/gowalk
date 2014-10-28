@@ -251,14 +251,17 @@ retry:
 	r.URL.Scheme = "https"
 	r.URL.Host = ip
 	req, err := http.NewRequest(r.Method, r.URL.String(), body)
+	if body != nil {
+		req.ContentLength = r.ContentLength
+	}
 	if err != nil {
 		log.Println("Create request failed:", err)
 		http.Error(w, "InternalServerError", http.StatusInternalServerError)
 		return
 	}
-	req.Host = r.Host
 	req.Header = r.Header
-	resp, err := client.Transport.RoundTrip(req)
+	req.Host = r.Host
+	resp, err := client.Do(req)
 	if err != nil {
 		suspCh <- ip
 		goto retry
