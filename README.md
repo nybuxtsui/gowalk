@@ -14,11 +14,8 @@ cd gowalk
 
 [二进制包下载](http://pan.baidu.com/s/1hq69vAO)
 
-#服务器端安装
-1. 下载  appe ngine SDK for go
-2. 修改server/app.yaml，application:设置成你申请的appid
-3. 修改server/config.go，const password = ""，在引号内填写需要的访问密码
-4. 进入到server目录中，运行sdk中的`goapp deploy .`，部署服务器端。
+#服务器端部署
+1. 运行upload.py直接部署，具体参考goagent的部署方式(感谢goagent提供的部署代码)
 
 #客户端安装
 1. 将client目录中的`gowalk.conf.default`重命名为`gowalk.conf`。
@@ -27,7 +24,4 @@ cd gowalk
 4. export GOPATH=$PWD
 5. go build gowalk
 6. ./gowalk
-
-#关于部署证书问题
-当采用gowalk作为代理部署gowalk时，需要将gowalk的ca.crt证书复制到go_appengine的lib/cacerts/cacerts.txt文件的末尾
 
