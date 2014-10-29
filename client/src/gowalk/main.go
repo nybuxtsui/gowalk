@@ -235,7 +235,7 @@ func badIpWorker() {
 	}
 }
 
-func (h *handler) forward(w http.ResponseWriter, r *http.Request) {
+func (h *handler) bypass(w http.ResponseWriter, r *http.Request) {
 	closeNotify := w.(http.CloseNotifier).CloseNotify()
 	var body io.Reader
 	if r.Method == "POST" {
@@ -295,7 +295,7 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Scheme == "" {
 		for _, domain := range config.GoWalk.ByPass {
 			if strings.HasSuffix(r.Host, domain) {
-				h.forward(w, r)
+				h.bypass(w, r)
 				return
 			}
 		}
@@ -310,11 +310,6 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 	var total int
 
 	for {
-		select {
-		case <-closeNotify:
-			return
-		default:
-		}
 		if autoRange {
 			data.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", pos, pos+rangeSize-1))
 		} else {
@@ -333,6 +328,11 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 		}
 
 	retry:
+		select {
+		case <-closeNotify:
+			return
+		default:
+		}
 		var ip = getGoodIp()
 		if ip == "" {
 			log.Println("All IP bad")
@@ -342,6 +342,8 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 		var req *http.Request
 		req, err = http.NewRequest("POST", "https://"+ip, buff)
 		req.Host = config.GoWalk.AppId[rand.Intn(len(config.GoWalk.AppId))] + ".appspot.com"
+		//req.Header.Add("User-Agent", "Mozilla/5.0")
+		//req.Header.Add("Accept-Encoding", "compress, gzip")
 
 		var resp *http.Response
 		resp, err = client.Transport.RoundTrip(req)
@@ -407,8 +409,10 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(data2.Status)
 		}
 		temp := make([]byte, 8*1024)
+		total := 0
 		for {
 			n, err := data2.Body.Read(temp)
+			total += n
 			if n != 0 {
 				w.Write(temp[0:n])
 			}
