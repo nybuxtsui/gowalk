@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -54,13 +53,13 @@ var (
 	client = &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost:   20,
-			ResponseHeaderTimeout: 10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},
 			Dial: (&net.Dialer{
 				Timeout:   5 * time.Second,
-				KeepAlive: 30 * time.Second,
+				KeepAlive: 120 * time.Second,
 			}).Dial,
 			TLSHandshakeTimeout: 10 * time.Second,
 		},
@@ -71,6 +70,7 @@ var (
 	goodCh   = make(chan string, 100)
 	suspCh   = make(chan string, 100)
 	badCh    = make(chan string, 100)
+	appIndex = 0
 )
 
 func (h *handler) Accept() (net.Conn, error) {
@@ -341,7 +341,8 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		var req *http.Request
 		req, err = http.NewRequest("POST", "https://"+ip, buff)
-		req.Host = config.GoWalk.AppId[rand.Intn(len(config.GoWalk.AppId))] + ".appspot.com"
+		req.Host = config.GoWalk.AppId[appIndex] + ".appspot.com"
+		appIndex = (appIndex + 1) % len(config.GoWalk.AppId)
 		//req.Header.Add("User-Agent", "Mozilla/5.0")
 		//req.Header.Add("Accept-Encoding", "compress, gzip")
 
