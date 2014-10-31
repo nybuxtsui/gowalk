@@ -238,7 +238,7 @@ func badIpWorker() {
 func (h *handler) bypass(w http.ResponseWriter, r *http.Request) {
 	closeNotify := w.(http.CloseNotifier).CloseNotify()
 	var body io.Reader
-	if r.Method == "POST" {
+	if r.Method == "POST" || r.Method == "PUT" {
 		body = r.Body
 	}
 retry:
