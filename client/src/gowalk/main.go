@@ -257,7 +257,7 @@ retry:
 		http.Error(w, "InternalServerError", http.StatusInternalServerError)
 		return
 	}
-	if body != nil {
+	if r.ContentLength != 0 {
 		req.ContentLength = r.ContentLength
 	}
 	req.Header = r.Header

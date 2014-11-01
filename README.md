@@ -16,3 +16,5 @@ gowalk是借鉴goagent，使用go开发的高性能稳定的代理服务器。
 5. 第一次运行后，将自动生成的certs目录下的ca.crt添加到浏览器信任CA(chrome:授权中心/firefox:证书机构)中
 
 [二进制包下载](http://pan.baidu.com/s/1hq69vAO)
+
+6. 建议采用[gogotester](https://github.com/azzvx/gogotester)扫描IP后填入配置文件
