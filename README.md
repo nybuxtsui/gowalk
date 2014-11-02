@@ -17,4 +17,6 @@ gowalk是借鉴goagent，使用go开发的高性能稳定的代理服务器。
 
 [二进制包下载](http://pan.baidu.com/s/1hq69vAO)
 
-6. 建议采用[gogotester](https://github.com/azzvx/gogotester)扫描IP后填入配置文件
+#其他
+1. 建议采用[gogotester](https://github.com/azzvx/gogotester)或[gscan](https://github.com/yinqiwen/gscan)扫描IP后填入配置文件
+2. 现在自动扫描IP也很好用了，可以试试哦
