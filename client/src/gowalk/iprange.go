@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +23,9 @@ type IpDefine struct {
 var (
 	ips   = make([]IpDefine, 0, 250)
 	total = 0
+
+	ipdone  sync.WaitGroup
+	iptotal int32
 )
 
 func calcIpCount(ip string) int {
@@ -72,7 +77,6 @@ func randomIp() string {
 }
 
 func IpInit() {
-	log.Println("IP not config, search IP")
 	rand.Seed(time.Now().UnixNano())
 	importIpv4Range("1.179.248-255.0-255")
 	importIpv4Range("103.246.187.0-255")
@@ -94,8 +98,6 @@ func IpInit() {
 	importIpv4Range("12.216.80.0-255")
 	importIpv4Range("121.78.74.68-123")
 	importIpv4Range("123.205.250-251.68-190")
-	importIpv4Range("130.211.0-255.0-255")
-	importIpv4Range("130.211.0-255.0-255")
 	importIpv4Range("142.250-251.0-255.0-255")
 	importIpv4Range("146.148.0-127.0-255")
 	importIpv4Range("149.126.86.1-59")
@@ -275,29 +277,55 @@ func IpInit() {
 	importIpv4Range("23.239.5.106")
 	importIpv4Range("74.207.242.141")
 	importIpv4Range("91.213.30.143-187")
+
+	// 至少等待4个ip可用
+	ipdone.Add(4)
+	log.Println("IP没有配置，搜索中，请耐心等待...")
+
+	// 先并发搜索4个IP
+	// 并发为了提高性能，但是会影响后续使用
+	// 所以找到后就关闭这100个并发
+	// 然后留5个慢慢搜索
+	for i := 0; i < 95; i++ {
+		go checkworker(4)
+	}
 	for i := 0; i < 5; i++ {
-		go func() {
-			for {
-				var ip = randomIp()
+		go checkworker(20)
+	}
 
-				c, err := net.DialTimeout("tcp", ip+":443", time.Millisecond*100)
-				if err != nil {
-					continue
-				}
-				c.Close()
+	ipdone.Wait()
+	log.Println("IP搜索完成，开始工作")
+}
 
-				req, err := http.NewRequest("GET", "https://"+ip, nil)
-				resp, err := client.Do(req)
-				if err == nil {
-					defer resp.Body.Close()
-					if resp.StatusCode == 200 {
-						resp.Body.Close()
-						goodCh <- ip
-						log.Println("Found IP:", ip, err)
-						break
-					}
-				}
+func checkworker(max int32) {
+	for {
+		if atomic.LoadInt32(&iptotal) >= max {
+			break
+		}
+		var ip = randomIp()
+
+		c, err := net.DialTimeout("tcp", ip+":443", time.Millisecond*100)
+		if err != nil {
+			continue
+		}
+		c.Close()
+
+		req, err := http.NewRequest("GET", "https://"+ip, nil)
+		resp, err := client.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == 200 {
+				resp.Body.Close()
+				goodCh <- ip
+				log.Println("Found IP:", ip, err)
+				atomic.AddInt32(&iptotal, 1)
+				func() {
+					defer func() {
+						recover()
+					}()
+					ipdone.Done()
+				}()
 			}
-		}()
+		}
 	}
 }
