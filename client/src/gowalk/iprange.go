@@ -98,6 +98,7 @@ func IpInit() {
 	importIpv4Range("12.216.80.0-255")
 	importIpv4Range("121.78.74.68-123")
 	importIpv4Range("123.205.250-251.68-190")
+	importIpv4Range("130.211.0-255.0-255")
 	importIpv4Range("142.250-251.0-255.0-255")
 	importIpv4Range("146.148.0-127.0-255")
 	importIpv4Range("149.126.86.1-59")
@@ -311,20 +312,31 @@ func checkworker(max int32) {
 		c.Close()
 
 		req, err := http.NewRequest("GET", "https://"+ip, nil)
-		resp, err := client.Do(req)
+		resp, err := client.Transport.RoundTrip(req)
 		if err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == 200 {
-				resp.Body.Close()
-				goodCh <- ip
-				log.Println("Found IP:", ip, err)
-				atomic.AddInt32(&iptotal, 1)
-				func() {
-					defer func() {
-						recover()
+				certok := false
+				for _, c := range resp.TLS.PeerCertificates[0].DNSNames {
+					if strings.Index(c, "google") != -1 {
+						certok = true
+						break
+					}
+				}
+				if certok {
+					resp.Body.Close()
+					goodCh <- ip
+					log.Println("Found IP:", ip, err)
+					atomic.AddInt32(&iptotal, 1)
+					func() {
+						defer func() {
+							recover()
+						}()
+						ipdone.Done()
 					}()
-					ipdone.Done()
-				}()
+				} else {
+					log.Println("可疑IP:", resp.TLS.PeerCertificates[0].DNSNames, ip)
+				}
 			}
 		}
 	}
