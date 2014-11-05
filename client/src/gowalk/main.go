@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	rangeSize = 24 * 1024 * 1024
+	rangeSize  = 24 * 1024 * 1024
+	tokenCount = 8
 )
 
 type httpsReq struct {
@@ -50,16 +51,17 @@ type IpReq struct {
 }
 
 var (
+	// 避免尽量重连
 	client = &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConnsPerHost:   20,
+			MaxIdleConnsPerHost:   tokenCount,
 			ResponseHeaderTimeout: 30 * time.Second,
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},
 			Dial: (&net.Dialer{
 				Timeout:   5 * time.Second,
-				KeepAlive: 120 * time.Second,
+				KeepAlive: 10 * time.Minute,
 			}).Dial,
 			TLSHandshakeTimeout: 10 * time.Second,
 		},
@@ -70,6 +72,7 @@ var (
 	goodCh   = make(chan string, 100)
 	suspCh   = make(chan string, 100)
 	badCh    = make(chan string, 100)
+	tokenCh  = make(chan int, tokenCount)
 	appIndex = 0
 )
 
@@ -226,8 +229,9 @@ func badIpWorker() {
 					delete(badIp, k)
 				} else {
 					log.Println("IP Bad:", k, err)
-					v.count++
-					v.t = now + int64(v.count*30)
+					// 最大2分钟
+					v.count = (v.count + 1) % 12
+					v.t = now + int64(v.count*10)
 					badIp[k] = v
 				}
 			}
@@ -241,6 +245,10 @@ func (h *handler) bypass(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" || r.Method == "PUT" {
 		body = r.Body
 	}
+	<-tokenCh
+	defer func() {
+		tokenCh <- 1
+	}()
 retry:
 	var ip = getGoodIp()
 	if ip == "" {
@@ -274,6 +282,9 @@ retry:
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
+	if resp.StatusCode >= 400 {
+		log.Println("################ Bypass failed:", r.Host, r.URL.String(), resp.StatusCode)
+	}
 	buff := make([]byte, 8*1024)
 	for {
 		select {
@@ -283,9 +294,15 @@ retry:
 		}
 		n, err := resp.Body.Read(buff)
 		if n != 0 {
+			if resp.StatusCode >= 400 {
+				log.Printf("    :%s\n", buff[:n])
+			}
 			w.Write(buff[:n])
 		}
 		if err != nil {
+			if err != io.EOF {
+				log.Println("Bypass failed:", err)
+			}
 			break
 		}
 	}
@@ -309,6 +326,10 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 	var curr int
 	var total int
 
+	<-tokenCh
+	defer func() {
+		tokenCh <- 1
+	}()
 	for {
 		if autoRange {
 			data.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", pos, pos+rangeSize-1))
@@ -343,6 +364,7 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 		req, err = http.NewRequest("POST", "https://"+ip, buff)
 		req.Host = config.GoWalk.AppId[appIndex] + ".appspot.com"
 		appIndex = (appIndex + 1) % len(config.GoWalk.AppId)
+		req.Header.Set("Connection", "keep-alive")
 		//req.Header.Add("User-Agent", "Mozilla/5.0")
 		//req.Header.Add("Accept-Encoding", "compress, gzip")
 
@@ -447,6 +469,10 @@ func main() {
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	log.Println("Start...")
+
+	for i := 0; i < tokenCount; i++ {
+		tokenCh <- 1
+	}
 
 	_, err = toml.DecodeFile("gowalk.conf", &config)
 	if err != nil {
