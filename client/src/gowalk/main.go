@@ -20,7 +20,9 @@ import (
 )
 
 const (
-	rangeSize  = 24 * 1024 * 1024
+	// RANGE获取的默认范围
+	rangeSize = 24 * 1024 * 1024
+	// GAE请求的并发令牌
 	tokenCount = 8
 )
 
@@ -46,6 +48,7 @@ type Config struct {
 	GoWalk gowalkConfig `toml:"gowalk"`
 }
 
+// 查询有效IP地址请求
 type IpReq struct {
 	ch chan string
 }
@@ -76,8 +79,21 @@ var (
 	appIndex = 0
 )
 
+/*
+handler模拟成Listener接口，供Server()函数使用
+Accept的net.Conn来源为https的代理请求
+https的代理程序流程为
+client -> (CONNECT) -> server
+server -> (OK) -> client
+client -> (SSL握手) -> server
+所以https代理先由普通的http代理模块处理
+当接收到CONNECT请求的时候，应答OK，并且将该连接通过channel转发到Accept函数里面
+Accept接受到channel后，完成SSL握手
+握手完成后，返回出net.Conn对象，就好像接收到一个标准的连接
+*/
 func (h *handler) Accept() (net.Conn, error) {
 	for {
+		// 从channle中拿出一个连接
 		req := <-h.ch
 		config := tls.Config{
 			ClientAuth:         tls.VerifyClientCertIfGiven,
@@ -85,6 +101,7 @@ func (h *handler) Accept() (net.Conn, error) {
 			InsecureSkipVerify: true,
 			Certificates:       make([]tls.Certificate, 1),
 		}
+		// 颁发证书
 		cert, err := getCert(req.host)
 		if err != nil {
 			log.Println("Get cert failed:", err)
@@ -92,20 +109,26 @@ func (h *handler) Accept() (net.Conn, error) {
 			continue
 		}
 		config.Certificates[0] = cert.toX509Pair()
+		// SSL握手
 		conn := tls.Server(req.conn, &config)
+		// 返回连接
 		return conn, nil
 	}
 }
 
+// handle模拟的Listener没有Close
 func (h *handler) Close() error {
 	return nil
 }
 
+// handle模拟的Listener没有Addr
+// 别人也不会用
 func (h *handler) Addr() net.Addr {
 	return nil
 }
 
 func (h *handler) onConnect(w http.ResponseWriter, r *http.Request) {
+	// CONNECT是https请求，请求附带了地址和端口，用:分割
 	addr := strings.Split(r.URL.String(), ":")
 	if len(addr) != 2 || len(addr[0]) <= 2 {
 		log.Println("URL too short")
@@ -113,6 +136,7 @@ func (h *handler) onConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 劫持该连接
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		log.Println("Can not hijacker")
@@ -125,8 +149,10 @@ func (h *handler) onConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "InternalServerError", http.StatusInternalServerError)
 		return
 	}
+	// 返回连接成功
 	bufrw.WriteString("HTTP/1.1 200 Connection established\r\n\r\n")
 	bufrw.Flush()
+	// 通过channel发送到handle.Accept()里面
 	h.ch <- &httpsReq{conn, addr[0][2:]}
 }
 
@@ -239,23 +265,27 @@ func badIpWorker() {
 	}
 }
 
+// 对于google自己的地址，我们直接将请求发送过去，而不通过GAE代理
 func (h *handler) bypass(w http.ResponseWriter, r *http.Request) {
 	closeNotify := w.(http.CloseNotifier).CloseNotify()
 	var body io.Reader
 	if r.Method == "POST" || r.Method == "PUT" {
 		body = r.Body
 	}
+	// 获取令牌
 	<-tokenCh
 	defer func() {
 		tokenCh <- 1
 	}()
 retry:
+	// 获取IP
 	var ip = getGoodIp()
 	if ip == "" {
 		log.Println("All IP bad")
 		http.Error(w, "All IP bad", http.StatusBadGateway)
 		return
 	}
+	// 构建Request对象
 	r.URL.Scheme = "https"
 	r.URL.Host = ip
 	log.Println("Forward:", r.Method, r.URL.String())
@@ -270,12 +300,14 @@ retry:
 	}
 	req.Header = r.Header
 	req.Host = r.Host
+	// 发送请求
 	resp, err := client.Transport.RoundTrip(req)
 	if err != nil {
 		suspCh <- ip
 		goto retry
 	}
 	defer resp.Body.Close()
+	// 应答给客户端
 	for k, i := range resp.Header {
 		for _, v := range i {
 			w.Header().Add(k, v)
@@ -308,6 +340,8 @@ retry:
 	}
 	return
 }
+
+// 普通代理
 func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Scheme == "" {
 		for _, domain := range config.GoWalk.ByPass {
@@ -326,15 +360,20 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 	var curr int
 	var total int
 
+	// 获取令牌
 	<-tokenCh
 	defer func() {
 		tokenCh <- 1
 	}()
+
 	for {
 		if autoRange {
+			// 已经处于自动分块模式
 			data.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", pos, pos+rangeSize-1))
 		} else {
+			// 没处于自动分块模式
 			if data.Header.Get("Range") == "" {
+				// 客户端没有请求分块，则进入自动分块模式
 				autoRange = true
 				data.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", pos, pos+rangeSize-1))
 			}
@@ -351,6 +390,7 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 	retry:
 		select {
 		case <-closeNotify:
+			// 如果客户端已经关闭连接，那我们也不做了，节省点资源
 			return
 		default:
 		}
@@ -360,6 +400,7 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "All IP bad", http.StatusBadGateway)
 			return
 		}
+
 		var req *http.Request
 		req, err = http.NewRequest("POST", "https://"+ip, buff)
 		req.Host = config.GoWalk.AppId[appIndex] + ".appspot.com"
@@ -378,6 +419,7 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != 200 {
+			// GAE代理程序出错
 			buff, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
 				suspCh <- ip
@@ -398,14 +440,20 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		defer data2.Body.Close()
 		if autoRange && data2.Status == 206 {
+			// 服务器端分段返回，则通过Content-Range计算curr和total
 			curr = -1
 			total = -1
 		} else {
+			// 不是返回206则表示服务器端没有分段返回
 			autoRange = false
 		}
 		for k, i := range data2.Header {
 			for _, v := range i {
 				if autoRange && k == "Content-Range" {
+					// 如果是autoRange并且看到Content-Range的头
+					// 那这个头不能返回给客户端，需要内部消化掉
+					// 在此处重新计算curr和total
+					// autoRange的第二个包，修改的header其实不会再返回给客户端
 					var ok bool
 					total, curr, ok = parseRange(v)
 					if !ok || curr == -1 || total == -1 {
@@ -425,6 +473,7 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if pos == 0 {
+				// autorange，第一个包，返回200，返回header
 				w.WriteHeader(200)
 			}
 			pos = curr + 1
@@ -448,8 +497,10 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if autoRange && pos < total {
+			// autoRange模式，数据取完，继续循环
 			continue
 		} else {
+			// 只要有一个没满足，则这次请求结束
 			break
 		}
 	}
@@ -508,6 +559,7 @@ func main() {
 			Handler:   h,
 			TLSConfig: &tls.Config{},
 		}
+		// 用户https的，第二http服务器
 		server.Serve(h)
 	}()
 
@@ -516,5 +568,7 @@ func main() {
 			log.Println(http.ListenAndServe(config.GoWalk.Profile, nil))
 		}()
 	}
+
+	// 对外服务的第一http服务器
 	log.Fatalln("Listen failed:", http.ListenAndServe(config.GoWalk.Listen, h))
 }
