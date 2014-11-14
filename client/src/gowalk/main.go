@@ -481,10 +481,8 @@ func (h *handler) onProxy(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(data2.Status)
 		}
 		temp := make([]byte, 8*1024)
-		total := 0
 		for {
 			n, err := data2.Body.Read(temp)
-			total += n
 			if n != 0 {
 				w.Write(temp[0:n])
 			}
