@@ -152,6 +152,53 @@ func (h *handler) onConnect(w http.ResponseWriter, r *http.Request) {
 	// 返回连接成功
 	bufrw.WriteString("HTTP/1.1 200 Connection established\r\n\r\n")
 	bufrw.Flush()
+
+	// 检查是否是bypass站点
+	for _, domain := range config.GoWalk.ByPass {
+		if strings.HasSuffix(addr[0], domain) {
+			log.Println("BYPASS:", r.URL.String())
+			// 获取IP
+			var ip = getGoodIp()
+			if ip == "" {
+				log.Println("All IP bad")
+				http.Error(w, "All IP bad", http.StatusBadGateway)
+				return
+			}
+			// 直连
+			peer, err := net.Dial("tcp", ip+":"+addr[1])
+			if err != nil {
+				log.Println("BYPASS dial bypass failed:", err)
+				conn.Close()
+			}
+			proxy := func(c1, c2 net.Conn) {
+				defer func() {
+					c1.Close()
+					c2.Close()
+				}()
+				buf := make([]byte, 1024*32)
+				for {
+					n, err := c1.Read(buf)
+					if err != nil {
+						if !strings.HasSuffix(err.Error(), "use of closed network connection") && err != io.EOF {
+							log.Println("BYBASS read failed:", err)
+						}
+						return
+					}
+					_, err = c2.Write(buf[0:n])
+					if err != nil {
+						if !strings.HasSuffix(err.Error(), "use of closed network connection") && err != io.EOF {
+							log.Println("BYPASS write failed:", err)
+						}
+						return
+					}
+				}
+			}
+			// 开正反代理
+			go proxy(peer, conn)
+			go proxy(conn, peer)
+			return
+		}
+	}
 	// 通过channel发送到handle.Accept()里面
 	h.ch <- &httpsReq{conn, addr[0][2:]}
 }
