@@ -36,12 +36,13 @@ type handler struct {
 }
 
 type gowalkConfig struct {
-	AppId    []string `toml:"appid"`
-	Ip       string   `toml:"ip"`
-	Password string   `toml:"password"`
-	Listen   string   `toml:"listen"`
-	ByPass   []string `toml:"bypass"`
-	Profile  string   `toml:"profile"`
+	AppId      []string `toml:"appid"`
+	Ip         string   `toml:"ip"`
+	Password   string   `toml:"password"`
+	Listen     string   `toml:"listen"`
+	ByPassMode int      `toml:"bypassmode"`
+	ByPass     []string `toml:"bypass"`
+	Profile    string   `toml:"profile"`
 }
 
 type Config struct {
@@ -154,49 +155,52 @@ func (h *handler) onConnect(w http.ResponseWriter, r *http.Request) {
 	bufrw.Flush()
 
 	// 检查是否是bypass站点
-	for _, domain := range config.GoWalk.ByPass {
-		if strings.HasSuffix(addr[0], domain) {
-			log.Println("BYPASS:", r.URL.String())
-			// 获取IP
-			var ip = getGoodIp()
-			if ip == "" {
-				log.Println("All IP bad")
-				http.Error(w, "All IP bad", http.StatusBadGateway)
-				return
-			}
-			// 直连
-			peer, err := net.Dial("tcp", ip+":"+addr[1])
-			if err != nil {
-				log.Println("BYPASS dial bypass failed:", err)
-				conn.Close()
-			}
-			proxy := func(c1, c2 net.Conn) {
-				defer func() {
-					c1.Close()
-					c2.Close()
-				}()
-				buf := make([]byte, 1024*32)
-				for {
-					n, err := c1.Read(buf)
-					if err != nil {
-						if !strings.HasSuffix(err.Error(), "use of closed network connection") && err != io.EOF {
-							log.Println("BYBASS read failed:", err)
+	// 0启用https前置bypass，但是这种模式对于android代理有问题
+	if config.GoWalk.ByPassMode == 0 {
+		for _, domain := range config.GoWalk.ByPass {
+			if strings.HasSuffix(addr[0], domain) {
+				log.Println("BYPASS:", r.URL.String())
+				// 获取IP
+				var ip = getGoodIp()
+				if ip == "" {
+					log.Println("All IP bad")
+					http.Error(w, "All IP bad", http.StatusBadGateway)
+					return
+				}
+				// 直连
+				peer, err := net.Dial("tcp", ip+":"+addr[1])
+				if err != nil {
+					log.Println("BYPASS dial bypass failed:", err)
+					conn.Close()
+				}
+				proxy := func(c1, c2 net.Conn) {
+					defer func() {
+						c1.Close()
+						c2.Close()
+					}()
+					buf := make([]byte, 1024*32)
+					for {
+						n, err := c1.Read(buf)
+						if err != nil {
+							if !strings.HasSuffix(err.Error(), "use of closed network connection") && err != io.EOF {
+								log.Println("BYBASS read failed:", err)
+							}
+							return
 						}
-						return
-					}
-					_, err = c2.Write(buf[0:n])
-					if err != nil {
-						if !strings.HasSuffix(err.Error(), "use of closed network connection") && err != io.EOF {
-							log.Println("BYPASS write failed:", err)
+						n, err = c2.Write(buf[0:n])
+						if err != nil {
+							if !strings.HasSuffix(err.Error(), "use of closed network connection") && err != io.EOF {
+								log.Println("BYPASS write failed:", err)
+							}
+							return
 						}
-						return
 					}
 				}
+				// 开正反代理
+				go proxy(peer, conn)
+				go proxy(conn, peer)
+				return
 			}
-			// 开正反代理
-			go proxy(peer, conn)
-			go proxy(conn, peer)
-			return
 		}
 	}
 	// 通过channel发送到handle.Accept()里面

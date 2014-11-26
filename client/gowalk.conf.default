@@ -3,5 +3,6 @@
   ip = ""
   listen = "127.0.0.1:18087"
   bypass = [".google.com", ".googleusercontent.com", ".gstatic.com", ".googleapis.com", ".google.com.hk", ".googletagmanager.com", ".googlegroups.com", ".googlecode.com", ".android.com", ".golang.org"]
+  bypassmode = 0
   password = ""
 
