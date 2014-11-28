@@ -172,6 +172,7 @@ func (h *handler) onConnect(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					log.Println("BYPASS dial bypass failed:", err)
 					conn.Close()
+					return
 				}
 				proxy := func(c1, c2 net.Conn) {
 					defer func() {
