@@ -73,12 +73,13 @@ var (
 	}
 	certPool *x509.CertPool
 	config   Config
-	reqCh    = make(chan IpReq, 100)
-	goodCh   = make(chan string, 100)
-	suspCh   = make(chan string, 100)
-	badCh    = make(chan string, 100)
-	tokenCh  = make(chan int, tokenCount)
-	appIndex = 0
+	reqCh           = make(chan IpReq, 100)
+	goodCh          = make(chan string, 100)
+	suspCh          = make(chan string, 100)
+	badCh           = make(chan string, 100)
+	tokenCh         = make(chan int, tokenCount)
+	appIndex        = 0
+	pac      []byte = nil
 )
 
 /*
@@ -569,6 +570,21 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Println("Process:", r.Method, r.URL)
 	if r.Method == "CONNECT" {
 		h.onConnect(w, r)
+	} else if r.Method == "GET" && r.URL.String() == "/gowalk.pac" {
+		if pac == nil {
+			data, err := ioutil.ReadFile("gowalk.pac")
+			if err != nil {
+				log.Println("Read PAC file failed:", err)
+				pac = []byte(`
+function FindProxyForURL(url, host) {
+    return 'DIRECT';
+}
+`)
+			} else {
+				pac = data
+			}
+		}
+		w.Write(pac)
 	} else {
 		h.onProxy(w, r)
 	}
