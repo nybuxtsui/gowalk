@@ -570,7 +570,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Println("Process:", r.Method, r.URL)
 	if r.Method == "CONNECT" {
 		h.onConnect(w, r)
-	} else if r.Method == "GET" && r.URL.String() == "/gowalk.pac" {
+	} else if r.Method == "GET" && r.URL.String() == "/_~_/gowalk.pac" {
 		if pac == nil {
 			data, err := ioutil.ReadFile("gowalk.pac")
 			if err != nil {
