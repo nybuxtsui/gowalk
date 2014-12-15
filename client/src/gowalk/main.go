@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -247,11 +248,19 @@ func getGoodIp() string {
 	return <-ch
 }
 
+func shuffle(slice []string) {
+	for i := range slice {
+		j := rand.Intn(i + 1)
+		slice[i], slice[j] = slice[j], slice[i]
+	}
+}
+
 func goodIpWorker() {
 	var goodIp []string
 	if len(config.GoWalk.Ip) != 0 {
 		goodIp = strings.Split(config.GoWalk.Ip, "|")
 		log.Println("Use IP:", goodIp)
+		shuffle(goodIp)
 	} else {
 		goodIp = make([]string, 0, 5)
 	}
@@ -567,6 +576,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	var err error
+
+	rand.Seed(time.Now().UnixNano())
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	log.Println("Start...")

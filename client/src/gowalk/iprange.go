@@ -77,7 +77,6 @@ func randomIp() string {
 }
 
 func IpInit() {
-	rand.Seed(time.Now().UnixNano())
 	importIpv4Range("1.179.248-255.0-255")
 	importIpv4Range("103.246.187.0-255")
 	importIpv4Range("103.25.178.4-59")
