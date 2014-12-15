@@ -20,3 +20,4 @@ gowalk是借鉴goagent，使用go开发的高性能稳定的代理服务器。
 #其他
 1. 建议采用[gogotester](https://github.com/azzvx/gogotester)或[gscan](https://github.com/yinqiwen/gscan)扫描IP后填入配置文件
 2. 现在自动扫描IP也很好用了，可以试试哦
+3. 支持pac，pac地址为当前代理地址/_~_/gowalk.pac，比如当然代理在18087监听，那么pac地址为 http://localhost:18087/_~_/gowalk.pac
